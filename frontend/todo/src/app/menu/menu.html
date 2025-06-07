@@ -1,0 +1,23 @@
+<header>
+  <nav class="navbar navbar-expand-md navbar-dark bg-dark">
+    <div>
+      <a [routerLink]="['/welcome', hardCodedAuthentication.getLoggedInUsername()]" class="navbar-brand">MyTodoApp</a>
+    </div>
+    <ul class="navbar-nav">
+      <li *ngIf="hardCodedAuthentication.isUserLoggedIn()">
+        <a [routerLink]="['/welcome', hardCodedAuthentication.getLoggedInUsername()]" class="nav-link">Home</a>
+      </li>
+      <li *ngIf="hardCodedAuthentication.isUserLoggedIn()">
+        <a [routerLink]="['/todos', hardCodedAuthentication.getLoggedInUsername()]" class="nav-link">Todos</a>
+      </li>
+    </ul>
+    <ul class="navbar-nav navbar-collapse justify-content-end">
+      <li *ngIf="!hardCodedAuthentication.isUserLoggedIn()">
+        <a routerLink="/login" class="nav-link">Login</a>
+      </li>
+      <li *ngIf="hardCodedAuthentication.isUserLoggedIn()">
+        <a routerLink="/logout" class="nav-link">Logout</a>
+      </li>
+    </ul>
+  </nav>
+</header>

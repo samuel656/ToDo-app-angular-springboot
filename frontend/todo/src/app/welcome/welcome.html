@@ -1,0 +1,11 @@
+<div><h1>welcome {{username}}!</h1></div>
+<div>
+<p>You can manage Your todos <a [routerLink]="['/todos', hardCodedAuthentication.getLoggedInUsername()]">here</a></p>
+</div>
+
+<div>
+You can see the customised message here 
+<button (click)="getHelloMessagePath()" class="btn btn-success">Get Welcome Messsage</button>
+</div>
+<p *ngIf="messageFromServer">{{ messageFromServer }}</p>
+

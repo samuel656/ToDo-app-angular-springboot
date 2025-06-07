@@ -1,0 +1,17 @@
+<h1>Login</h1>
+<div class="container">
+    <div class="alert alert-danger" *ngIf="inValidLogin">{{ errorMsg }}</div>
+    <div > 
+        <form >
+            <fieldset class="form-group">
+                <label for="username">Username</label>
+                <input type="text" name="username" [(ngModel)]="username" class="form-control">
+            </fieldset>
+            <fieldset class="form-group">
+                <label for="password">Password</label>
+                <input type="password" name="password" [(ngModel)]="password" class="form-control">
+            </fieldset>
+            <button type="button" class="btn btn-success" (click)="handleLogin()">login</button>
+        </form>
+    </div>
+</div>
