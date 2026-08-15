@@ -1,0 +1,11 @@
+# Java / Maven
+backend/MyTodo/target/
+.m2-repository/
+
+# Angular / Node
+frontend/todo/node_modules/
+frontend/todo/.angular/
+frontend/todo/dist/
+
+# IDE
+.vscode/
