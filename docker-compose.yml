@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: ./backend/MyTodo
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+
+  frontend:
+    build:
+      context: ./frontend/todo
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "4200:80"

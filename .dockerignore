@@ -1,0 +1,7 @@
+.git
+.vscode
+.m2-repository
+backend/MyTodo/target
+frontend/todo/node_modules
+frontend/todo/.angular
+frontend/todo/dist

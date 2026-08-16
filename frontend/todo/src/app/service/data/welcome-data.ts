@@ -20,10 +20,10 @@ export class WelcomeData {
   ) { }
 
  getHelloMessage() {
-  return this.http.get<HelloWorldBean>('http://localhost:8082/hello-world-bean');
+  return this.http.get<HelloWorldBean>('/api/hello-world-bean');
 }
  getHelloMessageWithPath(name:String) {
-  return this.http.get<HelloWorldBean>(`http://localhost:8082/hello-world-bean/path/${name}`);
+  return this.http.get<HelloWorldBean>(`/api/hello-world-bean/path/${name}`);
 }
 
 }
