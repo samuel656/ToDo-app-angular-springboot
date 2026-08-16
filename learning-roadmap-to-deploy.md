@@ -1,6 +1,4 @@
-# 🧭 Our learning roadmap
-
-We'll do this in stages.
+# 🧭 Learning roadmap
 
 ### Phase 1 — Understand your existing application
 
