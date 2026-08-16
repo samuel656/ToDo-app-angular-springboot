@@ -384,7 +384,7 @@ You'll eventually have something like:
 
 ```text
 Spring Boot
-localhost:8080
+localhost:8082
 ```
 
 ---
