@@ -449,4 +449,4 @@ Spring Boot
 H2
 ```
 
-**That is the exact milestone you should record for today.** Phase 5 will replace the final development-only piece, **H2**, with **RDS MySQL + Secrets Manager**.
+Phase 5 will replace the final development-only piece, **H2**, with **RDS MySQL + Secrets Manager**.
