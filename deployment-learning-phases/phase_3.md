@@ -1,59 +1,149 @@
 # Phase 3 — Networking
 
-## Objective
+## 3.1 Objective
 
-Understand how the frontend and backend containers communicate inside AWS without exposing an ECS task address to the Angular application.
+The objective of Phase 3 was to understand how the frontend and backend containers communicate inside AWS.
 
-## Networking flow
+Our final networking flow is:
+
+```text
+                         INTERNET
+                            │
+                            ▼
+                 Frontend ECS Service
+                    Angular + Nginx
+                       Port 80
+                            │
+                            │ /api/*
+                            ▼
+                  Backend Application
+                  Load Balancer (ALB)
+                       Port 80
+                            │
+                            ▼
+                  Backend Target Group
+                       Port 8082
+                            │
+                            ▼
+                    Backend ECS Task
+                    Spring Boot :8082
+```
+
+---
+
+# 3.2 VPC
+
+We deployed the application inside an AWS VPC.
+
+The VPC visible in our configuration was:
+
+```text
+VPC: vpc-07ebee6b3399df94d
+```
+
+The ALB was configured inside this VPC.
+
+The important concept is:
+
+> A VPC provides the isolated networking environment in AWS where our ECS tasks, load balancer, and other resources communicate.
+
+---
+
+# 3.3 Subnets
+
+The ALB was configured across **3 Availability Zones/subnets**.
+
+From the ALB configuration:
+
+```text
+ap-south-1a
+ap-south-1b
+ap-south-1c
+```
+
+This gives the load balancer availability across multiple Availability Zones.
+
+Conceptually:
+
+```text
+                 VPC
+                  │
+       ┌──────────┼──────────┐
+       │          │          │
+      AZ-a       AZ-b       AZ-c
+       │          │          │
+    Subnet     Subnet     Subnet
+       │          │          │
+       └──────────┼──────────┘
+                  │
+                 ALB
+```
+
+---
+
+# 3.4 Public vs Private Networking
+
+We used an **internet-facing Application Load Balancer**.
+
+Therefore, the ALB can receive requests from the Internet.
+
+The architecture is:
 
 ```text
 Internet
-  |
-  v
-Frontend ECS service (Angular + Nginx, :80)
-  |
-  | /api/*
-  v
-Backend Application Load Balancer (:80)
-  |
-  v
-Backend target group (:8082)
-  |
-  v
-Backend ECS task (Spring Boot, :8082)
+   │
+   ▼
+Internet-facing ALB
+   │
+   ▼
+Backend ECS Task
 ```
 
-## VPC and subnets
+For our learning deployment, the frontend ECS task was also reachable publicly through its public IP.
 
-The application resources were deployed in VPC `vpc-07ebee6b3399df94d`. The Application Load Balancer (ALB) spans subnets in three Availability Zones:
-
-- `ap-south-1a`
-- `ap-south-1b`
-- `ap-south-1c`
-
-The VPC provides the isolated AWS network in which ECS tasks, the ALB, and other resources communicate. Using multiple Availability Zones makes the ALB available across separate AWS infrastructure locations.
-
-## Public and private networking
-
-The backend ALB is internet-facing, so it can receive requests from the Internet. For this learning deployment, the frontend ECS task was also accessible through its public IP:
+The frontend was accessed using:
 
 ```text
 http://13.201.88.170
 ```
 
-The backend target is reached through its ECS task private IP, rather than its public address.
+This successfully loaded the Angular application.
 
-## Frontend-to-backend communication
+---
 
-The Angular application uses relative API paths, for example:
+# 3.5 Frontend → Backend Communication
+
+Initially, the frontend should not directly depend on:
+
+```text
+localhost:8082
+```
+
+because `localhost` from the browser means the user's own computer.
+
+Instead, the Angular application uses relative API URLs:
 
 ```typescript
 /api/users/${name}/list-todos
 ```
 
-It does not use `localhost:8082`. In a browser, `localhost` means the user's own machine, not the Spring Boot container running in ECS.
+For example:
 
-Nginx in the frontend container acts as a reverse proxy:
+```text
+/api/users/samuel/list-todos
+```
+
+There is **no `localhost:8082` in the Angular service**.
+
+This is important because Nginx handles the API routing.
+
+---
+
+# 3.6 Nginx as Reverse Proxy
+
+We modified the frontend `nginx.conf`.
+
+The important configuration is:
 
 ```nginx
 location /api/ {
@@ -67,23 +157,73 @@ location /api/ {
 }
 ```
 
-The trailing slash on `proxy_pass` removes the `/api/` prefix while forwarding. For example:
+The important part is:
 
-```text
-Browser:  /api/users/samuel/list-todos
-Nginx:    /users/samuel/list-todos
-Backend:  receives the request through the ALB
+```nginx
+location /api/
 ```
 
-## Result
+and:
 
-The frontend now communicates with the backend through Nginx and the ALB. It does not need to know the address of any individual backend ECS task, so replacing a task does not require an Angular code change.
+```nginx
+proxy_pass http://todo-alb-1893921724.ap-south-1.elb.amazonaws.com/;
+```
 
-## What was learned
+### Example
 
-- VPCs, subnets, and Availability Zones
-- Public versus private networking
-- ECS task private addressing
-- Why browser code must not use `localhost:8082`
-- Nginx reverse-proxy routing
-- Frontend-to-backend API communication using relative URLs
+Angular sends:
+
+```text
+/api/users/samuel/list-todos
+```
+
+Nginx forwards it to the backend ALB as:
+
+```text
+/users/samuel/list-todos
+```
+
+because of the trailing `/` in:
+
+```nginx
+proxy_pass http://todo-alb-1893921724.ap-south-1.elb.amazonaws.com/;
+```
+
+So:
+
+```text
+Browser
+   │
+   │ /api/users/samuel/list-todos
+   ▼
+Nginx
+   │
+   │ /users/samuel/list-todos
+   ▼
+Backend ALB
+   │
+   ▼
+Spring Boot
+```
+
+---
+
+# Phase 3 Result
+
+We successfully established:
+
+```text
+Angular
+   ↓
+Nginx
+   ↓
+Backend ALB
+   ↓
+Spring Boot
+```
+
+The frontend did **not** need to know the backend ECS task IP.
+
+This is an important advantage of using a load balancer.
+
+---
