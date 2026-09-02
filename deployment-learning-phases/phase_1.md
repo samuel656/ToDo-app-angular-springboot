@@ -1,662 +1,466 @@
-# Phase 1 — ECS / Fargate
+# Phase 1 — Understand & run application
+
+
+## 1. Objective
+
+The goal of **Phase 1** was to establish a known-working baseline for the Todo application before introducing Docker or AWS.
+
+The application consists of:
+
+```text
+Angular 20 Frontend
+        ↓
+Spring Boot REST API
+        ↓
+H2 In-Memory Database
+```
+
+The key principle was:
+
+> **Before deploying anything, prove that the application itself works correctly.**
 
 ---
 
-# 1. Create ECS Cluster
+# 2. Application Architecture
 
-AWS Console:
+The project contains two main applications.
 
 ```text
-Amazon ECS
-   ↓
-Clusters
-   ↓
-Create cluster
+ToDo-app-angular-springboot/
+│
+├── backend/
+│   └── MyTodo/
+│       ├── pom.xml
+│       └── src/
+│
+├── frontend/
+│   └── todo/
+│       ├── package.json
+│       ├── angular.json
+│       └── src/
+│
+└── README.md
 ```
 
-Cluster name:
+### Backend
+
+The backend is a **Spring Boot 3.5.0** application using:
+
+* Java 17
+* Spring Web
+* Spring Data JPA
+* H2
+* Maven
+
+### Frontend
+
+The frontend is an **Angular 20** application using:
+
+* Angular CLI 20
+* TypeScript
+* npm
+
+---
+
+# 3. Backend Configuration
+
+The backend application runs on:
 
 ```text
-todo-app-cluster
+http://localhost:8082
 ```
 
-We created the cluster successfully.
+The main REST controller is `TodoController`.
 
-Result:
+It uses:
 
-```text
-todo-app-cluster
-Status: Active
+```java
+@RestController
 ```
 
-### Important concept
+and exposes Todo-related REST APIs.
 
-An ECS cluster is a logical grouping where ECS services/tasks run.
+---
+
+# 4. REST API Endpoints
+
+The backend exposes the following Todo endpoints.
+
+| HTTP Method | Endpoint                            | Purpose                  |
+| ----------- | ----------------------------------- | ------------------------ |
+| GET         | `/users/{username}/list-todos`      | Retrieve all Todos       |
+| GET         | `/users/{username}/list-todos/{id}` | Retrieve a specific Todo |
+| POST        | `/users/{username}/list-todos`      | Create a Todo            |
+| PUT         | `/users/{username}/list-todos/{id}` | Update a Todo            |
+| DELETE      | `/users/{username}/list-todos/{id}` | Delete a Todo            |
+
+There are also test endpoints:
 
 ```text
-ECS Cluster
-└── todo-app-cluster
+GET /
+GET /hello-world-bean
+GET /hello-world-bean/path/{name}
+GET /test
+```
+
+For example:
+
+```text
+GET http://localhost:8082/
+```
+
+returns:
+
+```text
+welcome to spring
 ```
 
 ---
 
-# 2. Understand Fargate
+# 5. CORS
 
-We selected:
+The backend currently allows requests from the Angular development server:
 
 ```text
-AWS Fargate
+http://localhost:4200
 ```
 
-Fargate means AWS manages the underlying servers for us.
+This is required because the frontend and backend are running on different ports during local development.
 
-We don't need to:
+The controller contains:
 
-```text
-Create EC2 instance
-Install Docker
-Manage OS
-Patch servers
-Manage container runtime
+```java
+@CrossOrigin(origins = {
+    "http://localhost:4200",
+    "http://localhost:8081"
+})
 ```
 
-Instead:
+For Phase 1, we did **not** change this configuration.
+
+When we move to Docker/AWS, this will be reconsidered according to the deployment architecture.
+
+---
+
+# 6. Starting the Backend
+
+From:
 
 ```text
-ECS
- ↓
-Fargate
- ↓
-Container
+backend/MyTodo
+```
+
+the backend was started using:
+
+```bash
+mvn spring-boot:run
+```
+
+Successful startup was confirmed by the Spring Boot startup message:
+
+```text
+Started MyTodoApplication
+```
+
+### Validation
+
+```text
+Spring Boot startup → PASS
 ```
 
 ---
 
-# 3. Create ECS Task Execution IAM Role
+# 7. Backend API Validation
 
-We went to:
+The backend was tested independently of Angular.
+
+We validated:
 
 ```text
-IAM
- ↓
-Roles
- ↓
-Create role
+GET /
+GET /hello-world-bean
+GET /users/samuel/list-todos
 ```
 
-The important purpose of the **Task Execution Role** is to allow ECS/Fargate to perform operations required to run the container, such as pulling the private image from ECR and sending logs to CloudWatch.
+The API responded successfully.
 
-The role used by the task definition was:
-
-```text
-ecsTaskExecutionRole
-```
-
-Our task definition showed:
+This established that the following chain works:
 
 ```text
-Task execution role:
-ecsTaskExecutionRole
-```
-
-### Important distinction
-
-There are two different concepts:
-
-```text
-Task Role
+HTTP Request
      ↓
-Permissions used BY your application/container
-
-Task Execution Role
-     ↓
-Permissions used BY ECS/Fargate to start the container
-```
-
-For our current deployment, the execution role was the important one.
-
----
-
-# 4. Create ECS Task Definition
-
-AWS Console:
-
-```text
-ECS
- ↓
-Task definitions
- ↓
-Create new task definition
-```
-
-We selected:
-
-```text
-AWS Fargate
-```
-
-## Task definition
-
-Our task definition family:
-
-```text
-todo-backend-task
-```
-
-Revision:
-
-```text
-1
-```
-
-Final ARN was under:
-
-```text
-arn:aws:ecs:ap-south-1:221027285753:task-definition/todo-backend-task:1
-```
-
----
-
-# 5. Task Configuration
-
-We used:
-
-```text
-Operating system:
-Linux/X86_64
-```
-
-CPU:
-
-```text
-0.25 vCPU
-```
-
-Memory:
-
-```text
-0.5 GB
-```
-
-Network mode:
-
-```text
-awsvpc
-```
-
----
-
-# 6. Container Configuration
-
-Container name:
-
-```text
-todo-backend
-```
-
-Image URI:
-
-```text
-221027285753.dkr.ecr.ap-south-1.amazonaws.com/todo-backend:1.0
-```
-
-This is the important connection between **ECR and ECS**:
-
-```text
-ECR
-└── todo-backend:1.0
-          ↓
-ECS Task Definition
-          ↓
-Fargate downloads image
-          ↓
-Container starts
-```
-
----
-
-# 7. Container Port
-
-Our Spring Boot application runs on:
-
-```text
-8082
-```
-
-Therefore we configured:
-
-```text
-Container port: 8082
-Protocol: TCP
-App protocol: HTTP
-```
-
-So:
-
-```text
 Spring Boot
      ↓
-8082
+TodoController
      ↓
-Docker Container
+TodoRepository
      ↓
-ECS/Fargate
+H2 Database
+     ↓
+HTTP Response
+```
+
+### Validation
+
+```text
+Backend REST API → PASS
 ```
 
 ---
 
-# 8. CloudWatch Logs
+# 8. Angular Application
 
-We enabled log collection:
+The Angular application runs locally on:
 
 ```text
-Use log collection: ✓
-Destination: Amazon CloudWatch
+http://localhost:4200
 ```
 
-Configuration:
+The Todo page is accessed using:
 
 ```text
-awslogs-group:
-/ecs/todo-backend-task
-
-awslogs-region:
-ap-south-1
-
-awslogs-stream-prefix:
-ecs
-
-awslogs-create-group:
-true
+http://localhost:4200/todos/samuel
 ```
 
-This allows us to inspect application/container logs from AWS.
+The Angular application was successfully started and opened in the browser.
 
----
-
-# 9. Create ECS Service
-
-From the task definition we selected:
+### Validation
 
 ```text
-Deploy
- ↓
-Create service
-```
-
-Cluster:
-
-```text
-todo-app-cluster
-```
-
-Service name:
-
-```text
-todo-backend-service
+Angular startup → PASS
 ```
 
 ---
 
-# 10. Compute Configuration
+# 9. Angular → Spring Boot Communication
 
-We used:
-
-```text
-Capacity provider strategy
-```
-
-Capacity provider:
+Initially, the Angular application attempted to call:
 
 ```text
-FARGATE
+/api/users/samuel/list-todos
 ```
 
-Base:
-
-```text
-0
-```
-
-Weight:
-
-```text
-1
-```
-
-Platform version:
-
-```text
-LATEST
-```
-
----
-
-# 11. Deployment Configuration
-
-Scheduling strategy:
-
-```text
-Replica
-```
-
-Desired tasks:
-
-```text
-1
-```
-
-Meaning ECS should maintain:
-
-```text
-1 running task
-```
-
-Our final service showed:
-
-```text
-Tasks:
-1 desired
-1 running
-0 pending
-```
-
----
-
-# 12. Networking
-
-We selected the default VPC:
-
-```text
-vpc-07ebee6b3399df94d
-```
-
-Subnets:
-
-```text
-ap-south-1a
-ap-south-1b
-ap-south-1c
-```
-
-Security group:
-
-```text
-sg-0246f7b5dc289d7c4
-```
-
-We used the default security group.
-
----
-
-# 13. Security Group — Port 8082
-
-Initially the security group had only its default inbound rule.
-
-We added:
-
-```text
-Type:
-Custom TCP
-
-Protocol:
-TCP
-
-Port:
-8082
-```
-
-This was necessary because our Spring Boot application listens on port `8082`.
-
-After modification, the security group showed:
-
-```text
-Inbound rules: 2
-```
-
-including the new `8082` rule.
-
----
-
-# 14. Public IP
-
-For the ECS service networking configuration we enabled:
-
-```text
-Public IP:
-Turned on
-```
-
-This allowed the Fargate task to receive a public IP.
-
-Our running task received:
-
-```text
-Public IP:
-13.126.21.183
-```
-
----
-
-# 15. ECS Deployment
-
-After creating the service, ECS started the task.
-
-We verified:
-
-```text
-Service:
-todo-backend-service
-
-Status:
-Active
-
-Tasks:
-1 Running
-```
-
-The deployment eventually showed:
-
-```text
-Deployment Complete
-1 task started successfully
-```
-
-This confirmed that:
-
-```text
-ECR → ECS → Fargate → Container
-```
-
-was working.
-
----
-
-# 16. Verify the Container
-
-We opened:
-
-```text
-http://13.126.21.183:8082
-```
-
-and received:
-
-```text
-Welcome to Spring
-```
-
-That was our first confirmation that the Spring Boot application was reachable externally.
-
----
-
-# 17. Test REST API
-
-Initially we tried:
-
-```text
-http://13.126.21.183:8082/api/todos
-```
-
-and received:
+but the request returned:
 
 ```text
 404 Not Found
 ```
 
-This was **not an AWS problem**.
+### Root Cause
 
-Our actual controller mappings are:
+The Angular application was running with the Angular development server.
+
+The existing `nginx.conf` contained an AWS ALB configuration:
+
+```nginx
+location /api/ {
+    proxy_pass http://todo-alb-1893921724.ap-south-1.elb.amazonaws.com/;
+}
+```
+
+That Nginx configuration is **not used by `npm start`**.
+
+Nginx becomes relevant when the Angular application is built and served through Nginx, such as in our Docker deployment.
+
+---
+
+# 10. Angular Development Proxy
+
+To solve the local-development routing problem, we introduced:
 
 ```text
-GET
-/users/{username}/list-todos
+frontend/todo/proxy.conf.json
+```
 
-GET
-/users/{username}/list-todos/{id}
+Configuration:
 
-POST
-/users/{username}/list-todos
+```json
+{
+  "/api": {
+    "target": "http://localhost:8082",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": {
+      "^/api": ""
+    }
+  }
+}
+```
 
-PUT
-/users/{username}/list-todos/{id}
+The Angular `start` script was configured to use this proxy:
 
-DELETE
-/users/{username}/list-todos/{id}
+```text
+ng serve --proxy-config proxy.conf.json
+```
 
-GET
-/test
+### What the proxy does
+
+Angular makes:
+
+```text
+/api/users/samuel/list-todos
+```
+
+The development proxy forwards it to:
+
+```text
+http://localhost:8082/users/samuel/list-todos
+```
+
+So the local architecture becomes:
+
+```text
+Browser
+   │
+   ▼
+Angular :4200
+   │
+   │ /api
+   ▼
+Angular Development Proxy
+   │
+   ▼
+Spring Boot :8082
+   │
+   ▼
+H2
+```
+
+After this change, the Todo API successfully returned data.
+
+### Validation
+
+```text
+Angular → Spring Boot → PASS
 ```
 
 ---
 
-# 18. Test POST API
+# 11. Todo CRUD Validation
 
-We then tested the actual POST endpoint:
+After establishing frontend/backend communication, we tested the complete CRUD workflow through the Angular UI.
 
-```text
-POST
-http://13.126.21.183:8082/users/samuel/list-todos
-```
+## Create
 
-with JSON data.
-
-The request successfully created a Todo.
-
-Therefore we confirmed:
+A new Todo was successfully created.
 
 ```text
-External Request
-      ↓
-Public IP
-      ↓
-Security Group : 8082
-      ↓
-ECS Fargate
-      ↓
-Docker Container
-      ↓
-Spring Boot Controller
-      ↓
-TodoRepository
-      ↓
-Database
+POST → PASS
 ```
 
-✅ **End-to-end backend deployment confirmed.**
+## Read
+
+Todo data was successfully retrieved and displayed.
+
+```text
+GET → PASS
+```
+
+## Update
+
+An existing Todo was successfully modified.
+
+```text
+PUT → PASS
+```
+
+## Delete
+
+An existing Todo was successfully removed.
+
+```text
+DELETE → PASS
+```
 
 ---
 
-# Current AWS Architecture
+# 12. Final Phase 1 Validation
 
-This is where we stopped today:
+| Area                    | Status |
+| ----------------------- | ------ |
+| Project structure       | ✅ PASS |
+| Java                    | ✅ PASS |
+| Maven                   | ✅ PASS |
+| Spring Boot startup     | ✅ PASS |
+| Backend port 8082       | ✅ PASS |
+| REST API                | ✅ PASS |
+| H2 database interaction | ✅ PASS |
+| Angular startup         | ✅ PASS |
+| Angular → Backend       | ✅ PASS |
+| Create Todo             | ✅ PASS |
+| Read Todo               | ✅ PASS |
+| Update Todo             | ✅ PASS |
+| Delete Todo             | ✅ PASS |
 
-```text
-                    AWS
-┌──────────────────────────────────────────────┐
-│                                              │
-│  ECR                                         │
-│  ├── Frontend image                          │
-│  └── Backend image                           │
-│          │                                   │
-│          │ todo-backend:1.0                  │
-│          ↓                                   │
-│  ECS Cluster                                 │
-│  └── todo-app-cluster                        │
-│          │                                   │
-│          ↓                                   │
-│  ECS Service                                 │
-│  └── todo-backend-service                    │
-│          │                                   │
-│          ↓                                   │
-│  Fargate Task                                │
-│  └── todo-backend container                  │
-│          │                                   │
-│          ↓                                   │
-│       Port 8082                              │
-│          │                                   │
-│          ↓                                   │
-│    Public IP: 13.126.21.183                  │
-│                                              │
-└──────────────────────────────────────────────┘
-```
+# 🟢 Phase 1 COMPLETE
 
-# Phase 0 vs Phase 1
-
-| Phase       | AWS Service         | What we did                                               |
-| ----------- | ------------------- | --------------------------------------------------------- |
-| **Phase 0** | Amazon ECR          | Stored frontend & backend Docker images                   |
-| **Phase 1** | Amazon ECS          | Created ECS cluster                                       |
-| **Phase 1** | AWS Fargate         | Ran backend container without managing EC2                |
-| **Phase 1** | IAM                 | Created/used ECS task execution role                      |
-| **Phase 1** | ECS Task Definition | Defined backend container, CPU, memory, port, image, logs |
-| **Phase 1** | ECS Service         | Maintained 1 running backend task                         |
-| **Phase 1** | EC2 Security Groups | Allowed TCP `8082`                                        |
-| **Phase 1** | CloudWatch          | Configured container logging                              |
-| **Phase 1** | Fargate Networking  | VPC, subnets, public IP                                   |
-| **Phase 1** | Testing             | Tested Spring Boot + POST Todo API                        |
-
-## Where we are now
-
-**Completed:**
+We now have a **known-good local baseline**.
 
 ```text
-✅ Phase 0 — ECR
-   ├── Frontend image
-   └── Backend image
+                 PHASE 1
 
-✅ Phase 1 — ECS/Fargate Backend
-   ├── ECS Cluster
-   ├── Fargate
-   ├── IAM execution role
-   ├── Task Definition
-   ├── ECS Service
-   ├── Security Group
-   ├── CloudWatch logs
-   ├── Public IP
-   └── REST API test
+             Browser
+                │
+                ▼
+       ┌─────────────────┐
+       │   Angular 20    │
+       │   :4200         │
+       └────────┬────────┘
+                │
+                │ /api
+                ▼
+       ┌─────────────────┐
+       │ Angular Proxy   │
+       └────────┬────────┘
+                │
+                ▼
+       ┌─────────────────┐
+       │  Spring Boot    │
+       │  :8082          │
+       └────────┬────────┘
+                │
+                ▼
+       ┌─────────────────┐
+       │      H2         │
+       │  In-memory DB   │
+       └─────────────────┘
 ```
 
-### Next phase
+## What we learned
 
-The natural next step will be to move from:
+**Application layer**
+
+* Angular frontend
+* Spring Boot backend
+* REST APIs
+* HTTP methods
+* Controller → Repository flow
+* H2 database
+
+**Integration layer**
+
+* CORS
+* Angular development proxy
+* `/api` routing
+* Frontend/backend separation
+
+**Validation mindset**
+
+We didn't move forward simply because the applications started. We separately validated:
 
 ```text
-Public IP → ECS Task
+Application startup
+        ↓
+Backend API
+        ↓
+Frontend startup
+        ↓
+Frontend → Backend
+        ↓
+CRUD
+        ↓
+PHASE 1 PASS
 ```
 
-toward a more realistic architecture such as:
-
-```text
-                    Internet
-                       ↓
-               Application Load
-                  Balancer
-                       ↓
-                ECS Service
-                       ↓
-                Fargate Tasks
-                       ↓
-               Spring Boot API
-```
+This is the baseline we'll use for **Phase 2 — Dockerization**.
 

@@ -1,917 +1,712 @@
-# Phase 2 --- Frontend Deployment
+# Phase 2 — Dockerization & Container Networking
 
-**---**
+## 1. Objective
 
-# 1. Create Frontend Docker Image
+The goal of **Phase 2** was to take the application validated in Phase 1 and run the **Angular frontend and Spring Boot backend as Docker containers**.
 
-We prepared the Angular frontend for container deployment.
+The final architecture is:
 
-The frontend Docker image was created using:
-
-``` text
-todo-frontend
+```text
+Browser
+   │
+   │ localhost:4200
+   ▼
+┌─────────────────────────────┐
+│ Frontend Container          │
+│ Angular Production Build    │
+│ Nginx :80                   │
+└──────────────┬──────────────┘
+               │
+               │ backend:8082
+               ▼
+┌─────────────────────────────┐
+│ Backend Container            │
+│ Spring Boot :8082            │
+└──────────────┬──────────────┘
+               │
+               ▼
+          H2 Database
 ```
 
-We created multiple image versions during development:
+The important objective was not simply to create images, but to **prove that the complete application works inside Docker**.
 
-``` text
-todo-frontend:1.1
-todo-frontend:1.2
-todo-frontend:1.3
+---
+
+# 2. Docker Environment Cleanup
+
+We started Phase 2 by checking existing Docker resources.
+
+### Containers
+
+```bash
+docker ps -a
 ```
 
-The latest frontend image created was:
+Result:
 
-``` text
-todo-frontend:1.3
+```text
+No containers
 ```
 
-The image size was approximately:
+There were no existing containers running from the previous setup.
 
-``` text
-48.6 MB
+### Existing images
+
+Several old Todo application images existed from previous experiments, including backend and frontend images with different tags.
+
+These were removed so Phase 2 could start from a clean local Docker image state.
+
+### Important
+
+We did **not** delete the AWS ECR repositories.
+
+The cleanup was limited to the **local Docker environment**.
+
+---
+
+# 3. Backend Dockerfile
+
+The existing backend Dockerfile uses a **multi-stage Docker build**:
+
+```dockerfile
+# Build the Spring Boot API.
+FROM maven:3.9-eclipse-temurin-17 AS build
+
+WORKDIR /workspace
+
+COPY pom.xml ./
+RUN mvn -B dependency:go-offline
+
+COPY src ./src
+RUN mvn -B clean package -DskipTests
+
+# Run the API with a small Java runtime image.
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY --from=build /workspace/target/*.jar app.jar
+
+EXPOSE 8082
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 ```
 
-**---**
+## Stage 1 — Build
 
-# 2. Nginx Configuration
-
-Because Angular is a frontend application, we used **Nginx** to serve
-the generated Angular static files.
-
-Our `nginx.conf` was:
-
-``` nginx
-server {
-    listen 80;
-    server_name _;
-
-    root /usr/share/nginx/html;
-    index index.html;
-
-    # Angular client-side routing
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
+```dockerfile
+FROM maven:3.9-eclipse-temurin-17 AS build
 ```
 
-**\### Important concept**
+This stage provides:
 
-Angular uses client-side routing.
+* Maven
+* Java 17
+* Build environment
 
-For example:
+The project dependencies are downloaded using:
 
-``` text
-/welcome/samuel
-
-/todos/samuel/-1
+```dockerfile
+RUN mvn -B dependency:go-offline
 ```
 
-These routes may not physically exist as files on the Nginx server.
+Then the source is copied and packaged:
+
+```dockerfile
+COPY src ./src
+RUN mvn -B clean package -DskipTests
+```
+
+This produces the Spring Boot JAR.
+
+---
+
+## Stage 2 — Runtime
+
+The final image uses:
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+```
+
+We only need the Java Runtime Environment to execute the already-built JAR.
+
+The JAR is copied from the build stage:
+
+```dockerfile
+COPY --from=build /workspace/target/*.jar app.jar
+```
+
+The application exposes:
+
+```dockerfile
+EXPOSE 8082
+```
+
+and starts with:
+
+```dockerfile
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+```
+
+### Why multi-stage builds?
+
+The final image does not need:
+
+* Maven
+* source compilation tools
+* build dependencies
+
+It only needs Java runtime + application JAR.
+
+This keeps the runtime image smaller and separates **build** from **execution**.
+
+---
+
+# 4. Backend Image
+
+The backend image was built using:
+
+```bash
+docker build -t todo-backend:phase2 .
+```
+
+The resulting image:
+
+```text
+todo-backend:phase2
+```
+
+Size:
+
+```text
+~348 MB
+```
+
+### Validation
+
+```text
+Spring Boot source
+        ↓
+Dockerfile
+        ↓
+Maven build
+        ↓
+JAR
+        ↓
+Java runtime image
+        ↓
+todo-backend:phase2
+```
+
+**Backend image build: ✅ PASS**
+
+---
+
+# 5. Backend Container
+
+The backend image was run using:
+
+```bash
+docker run --name todo-backend-phase2 -p 8082:8082 todo-backend:phase2
+```
+
+The port mapping is:
+
+```text
+Host                 Container
+───────────────────────────────
+8082        ───────→  8082
+```
 
 Therefore:
 
-``` nginx
-try_files $uri $uri/ /index.html;
+```text
+http://localhost:8082
+```
+
+reaches the Spring Boot application inside the container.
+
+---
+
+# 6. Backend Container Validation
+
+The backend was tested through Docker using the REST APIs.
+
+Example:
+
+```bash
+curl http://localhost:8082/
+```
+
+The application responded successfully.
+
+The Todo endpoint was also tested:
+
+```bash
+curl http://localhost:8082/users/samuel/list-todos
+```
+
+The backend container therefore successfully handled REST requests.
+
+### Validation
+
+```text
+Backend image       ✅
+Backend container   ✅
+Spring Boot         ✅
+REST API            ✅
+H2                  ✅
+```
+
+---
+
+# 7. Frontend Dockerfile
+
+The frontend Dockerfile also uses a **multi-stage build**:
+
+```dockerfile
+# Build the Angular application.
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# Serve the production build and proxy API calls to the Spring Boot service.
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist/todo/browser /usr/share/nginx/html
+
+EXPOSE 80
+```
+
+---
+
+# 8. Angular Build Stage
+
+The first stage uses:
+
+```dockerfile
+FROM node:20-alpine AS build
+```
+
+Node.js is required to build the Angular application.
+
+Dependencies are installed using:
+
+```dockerfile
+RUN npm ci
+```
+
+The application is then built using:
+
+```dockerfile
+RUN npm run build
+```
+
+This creates the Angular production files.
+
+---
+
+# 9. Nginx Runtime Stage
+
+The second stage uses:
+
+```dockerfile
+FROM nginx:1.27-alpine
+```
+
+The Angular production build is copied into:
+
+```text
+/usr/share/nginx/html
+```
+
+using:
+
+```dockerfile
+COPY --from=build /app/dist/todo/browser /usr/share/nginx/html
+```
+
+Nginx listens on:
+
+```text
+80
+```
+
+The host later maps:
+
+```text
+4200 → 80
+```
+
+---
+
+# 10. Nginx Configuration
+
+The original Nginx configuration contained an old AWS ALB address.
+
+That was removed because we intentionally restarted the infrastructure from scratch.
+
+The Docker version uses:
+
+```nginx
+location /api/ {
+    proxy_pass http://backend:8082/;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+The important configuration is:
+
+```text
+backend:8082
+```
+
+`backend` is the Docker Compose service name.
+
+---
+
+# 11. Why `backend:8082` Instead of `localhost:8082`?
+
+This was one of the most important Docker networking concepts learned in Phase 2.
+
+Inside a container:
+
+```text
+localhost
 ```
 
 means:
 
-``` text
-Request
-   ↓
-Check requested file
-   ↓
-Check requested directory
-   ↓
-If not found
-   ↓
-Return index.html
-   ↓
-Angular handles the route
+> **The current container itself.**
+
+Therefore, from the frontend container:
+
+```text
+localhost:8082
 ```
 
-This prevents Angular routes from returning `404` when directly accessed
-or refreshed.
+does not mean the Spring Boot container.
 
-**---**
+Docker Compose creates a shared network and provides DNS resolution for service names.
 
-# 3. Local Frontend Image Verification
+Therefore:
 
-We verified the locally created frontend images using:
-
-``` text
-docker images todo-frontend
+```text
+backend
 ```
 
-The final image list included:
+resolves to the backend container.
 
-``` text
-todo-frontend:1.1
-todo-frontend:1.2
-todo-frontend:1.3
+The communication becomes:
+
+```text
+Frontend container
+       │
+       │ http://backend:8082
+       ▼
+Backend container
 ```
 
-The latest image was:
+---
 
-``` text
-todo-frontend:1.3
+# 12. Docker Networking Experiment
+
+Before using Compose, the frontend was temporarily started independently.
+
+Nginx produced:
+
+```text
+host not found in upstream "backend"
 ```
 
-**---**
+This was expected because the independently started frontend container did not have access to a Docker network where `backend` could be resolved.
 
-# 4. Push Frontend Image to Amazon ECR
+This demonstrated the difference between:
 
-The frontend image was pushed to our existing ECR repository:
-
-``` text
-221027285753.dkr.ecr.ap-south-1.amazonaws.com/todo-frontend
+```text
+docker run
 ```
 
-The image reference used for deployment was:
+and:
 
-``` text
-221027285753.dkr.ecr.ap-south-1.amazonaws.com/todo-frontend:1.3
+```text
+docker compose
 ```
 
-This creates the connection:
+---
 
-``` text
-Angular Application
-        ↓
-Docker Image
-        ↓
-Amazon ECR
-        ↓
-todo-frontend:1.3
+# 13. Docker Compose
+
+The final Compose configuration is:
+
+```yaml
+services:
+  backend:
+    build:
+      context: ./backend/MyTodo
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+
+  frontend:
+    build:
+      context: ./frontend/todo
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "4200:80"
 ```
 
-**---**
+---
 
-# 5. Create Frontend ECS Task Definition
+# 14. Compose Architecture
 
-AWS Console:
+Compose creates a network for the services.
 
-``` text
-ECS
+The services are:
 
-   ↓
-
-Task definitions
-
-   ↓
-
-Create new task definition
+```text
+backend
+frontend
 ```
 
-We created the frontend task definition family:
+The frontend can therefore resolve:
 
-``` text
-todo-frontend-task
+```text
+backend
 ```
 
-During the deployment process, the successful revision became:
+through Docker's internal DNS.
 
-``` text
-todo-frontend-task:3
+The architecture becomes:
+
+```text
+                  Docker Compose Network
+
+┌────────────────────────┐
+│ frontend               │
+│                        │
+│ Angular + Nginx        │
+│ Nginx :80              │
+└───────────┬────────────┘
+            │
+            │ backend:8082
+            ▼
+┌────────────────────────┐
+│ backend                │
+│                        │
+│ Spring Boot :8082      │
+└───────────┬────────────┘
+            │
+            ▼
+           H2
 ```
 
-**---**
+---
 
-# 6. Frontend Task Configuration
+# 15. Frontend Image
 
-We used:
+The frontend image was built using:
 
-``` text
-Launch type:
-
-AWS Fargate
+```bash
+docker build -t todo-frontend:phase2 .
 ```
 
-Operating system:
+Result:
 
-``` text
-Linux/X86_64
+```text
+todo-frontend:phase2
 ```
 
-CPU:
+Size:
 
-``` text
-0.25 vCPU
+```text
+~48.6 MB
 ```
 
-Memory:
+### Validation
 
-``` text
-0.5 GB
-```
-
-Network mode:
-
-``` text
-awsvpc
-```
-
-The same Fargate approach allowed us to run the frontend container
-without managing EC2 servers.
-
-**---**
-
-# 7. Frontend Container Configuration
-
-The frontend container was configured to use the Nginx server.
-
-The container serves the Angular application through:
-
-``` text
-Port 80
-```
-
-The flow is:
-
-``` text
-Angular Build
-     ↓
-Static Files
-     ↓
-Nginx Container
-     ↓
-Port 80
-```
-
-**---**
-
-# 8. Create Frontend ECS Service
-
-We deployed the frontend task definition into:
-
-``` text
-todo-app-cluster
-```
-
-Service name:
-
-``` text
-todo-frontend-service
-```
-
-Scheduling strategy:
-
-``` text
-Replica
-```
-
-Desired tasks:
-
-``` text
-1
-```
-
-The service eventually showed:
-
-``` text
-Tasks:
-
-1 desired
-1 running
-0 pending
-```
-
-Deployment status:
-
-``` text
-Success
-```
-
-**---**
-
-# 9. Frontend ECS Deployment
-
-The frontend service successfully deployed:
-
-``` text
-todo-frontend-service
-```
-
-with task definition:
-
-``` text
-todo-frontend-task:3
-```
-
-The deployment showed:
-
-``` text
-Deployment Complete
-```
-
-The final service state was:
-
-``` text
-Service:
-
-todo-frontend-service
-
-Status:
-
-Active
-
-Tasks:
-
-1 running
-0 pending
-```
-
-This confirmed:
-
-``` text
-ECR
- ↓
-ECS Task Definition
- ↓
-Fargate
- ↓
-Frontend Container
- ↓
+```text
+Angular source
+      ↓
+Node 20
+      ↓
+npm ci
+      ↓
+Angular production build
+      ↓
 Nginx
+      ↓
+todo-frontend:phase2
 ```
 
-was working.
+**Frontend image build: ✅ PASS**
 
-**---**
+---
 
-# 10. Frontend Public IP
+# 16. Frontend Container
 
-The frontend Fargate task received a public IP.
+The frontend container exposes Nginx on port `80`.
 
-The latest frontend public IP observed during Phase 2 was:
+Docker Compose maps:
 
-``` text
-13.203.97.113
+```text
+4200 → 80
 ```
 
-We tested:
+Therefore the application is accessed from the browser through:
 
-``` text
-http://13.203.97.113
-```
-
-and:
-
-``` text
-http://13.203.97.113/welcome/samuel
-```
-
-The Angular application loaded successfully.
-
-**---**
-
-# 11. Frontend Application Verification
-
-We verified that the deployed application could display the Angular UI.
-
-The application showed:
-
-``` text
-MyTodoApp
-```
-
-and:
-
-``` text
-welcome samuel!
-```
-
-This confirmed:
-
-``` text
-Internet
-   ↓
-Frontend Public IP
-   ↓
-Fargate Task
-   ↓
-Nginx
-   ↓
-Angular Application
-```
-
-was working.
-
-**---**
-
-# 12. Backend Connection Issue
-
-After the frontend was deployed, we found an important issue.
-
-The Angular application was making API requests using relative paths
-such as:
-
-``` text
-/api/hello-world-bean/path/samuel
-```
-
-and:
-
-``` text
-/api/users/samuel/list-todos
-```
-
-When the frontend was opened using:
-
-``` text
-http://13.203.97.113
-```
-
-the browser interpreted:
-
-``` text
-/api/users/samuel/list-todos
-```
-
-as:
-
-``` text
-http://13.203.97.113/api/users/samuel/list-todos
-```
-
-But:
-
-``` text
-13.203.97.113
-```
-
-is the **frontend** task.
-
-The backend was running separately.
-
-Therefore the request was reaching the wrong container.
-
-**---**
-
-# 13. Backend Public IP
-
-During Phase 2, the backend task had a public IP:
-
-``` text
-52.66.223.6
-```
-
-The Spring Boot application runs on:
-
-``` text
-8082
-```
-
-Therefore the direct backend endpoint was:
-
-``` text
-http://52.66.223.6:8082
-```
-
-The architecture at this point was:
-
-``` text
-Browser
-   |
-   +----------------------------+
-   |                            |
-   ↓                            ↓
-Frontend                     Backend
-13.203.97.113                52.66.223.6
-Port 80                      Port 8082
-   |                            |
-   ↓                            ↓
-Nginx                        Spring Boot
-   |                            |
-   ↓                            ↓
-Angular                      REST API
-```
-
-**---**
-
-# 14. CORS Configuration
-
-Our backend controller originally contained:
-
-``` java
-@CrossOrigin(origins = "http://localhost:4200")
-```
-
-This was configured for local development.
-
-Local Angular:
-
-``` text
+```text
 http://localhost:4200
 ```
 
-But deployed Angular:
+The Todo page is:
 
-``` text
-http://13.203.97.113
+```text
+http://localhost:4200/todos/samuel
 ```
 
-is a different origin.
+---
 
-Therefore the local CORS configuration does not represent the deployed
-frontend environment.
+# 17. Complete Request Flow
 
-A temporary solution would be to change the allowed origin to the
-deployed frontend URL.
+When the user loads the Todo application:
 
-However, this is not the permanent architecture.
-
-**---**
-
-# 15. Frontend API Error
-
-While testing the deployed frontend, we saw API failures such as:
-
-``` text
-Failed to load resource:
-the server responded with a status of 404
+```text
+Browser
+   │
+   │ http://localhost:4200
+   ▼
+Frontend Container
+   │
+   │ Nginx
+   ▼
+Angular Application
 ```
 
-For example:
+When Angular requests Todo data:
 
-``` text
-/api/users/samuel/list-todos
+```text
+Browser
+   │
+   │ /api/users/samuel/list-todos
+   ▼
+Frontend / Nginx
+   │
+   │ backend:8082
+   ▼
+Backend Container
+   │
+   ▼
+TodoController
+   │
+   ▼
+TodoRepository
+   │
+   ▼
+H2
 ```
 
-and:
+The response travels back through the same path to Angular.
 
-``` text
-/api/hello-world-bean/path/samuel
+---
+
+# 18. Docker CRUD Validation
+
+The final test was performed through the **Dockerized application**, not the local development servers.
+
+All CRUD operations were successfully validated:
+
+| Operation   | HTTP Method | Result |
+| ----------- | ----------- | ------ |
+| Create Todo | POST        | ✅ PASS |
+| Read Todo   | GET         | ✅ PASS |
+| Update Todo | PUT         | ✅ PASS |
+| Delete Todo | DELETE      | ✅ PASS |
+
+This confirms that the complete Dockerized application is functional.
+
+---
+
+# 19. Final Phase 2 Validation
+
+| Component           | Result |
+| ------------------- | ------ |
+| Docker cleanup      | ✅ PASS |
+| Backend Dockerfile  | ✅ PASS |
+| Frontend Dockerfile | ✅ PASS |
+| Nginx configuration | ✅ PASS |
+| Backend image       | ✅ PASS |
+| Backend container   | ✅ PASS |
+| Backend API         | ✅ PASS |
+| Frontend image      | ✅ PASS |
+| Frontend container  | ✅ PASS |
+| Docker networking   | ✅ PASS |
+| Docker Compose      | ✅ PASS |
+| Frontend → Backend  | ✅ PASS |
+| Create Todo         | ✅ PASS |
+| Read Todo           | ✅ PASS |
+| Update Todo         | ✅ PASS |
+| Delete Todo         | ✅ PASS |
+
+# 🟢 PHASE 2 COMPLETE
+
+We have now established a **second known-good baseline**:
+
+```text
+PHASE 1
+Local Application
+        │
+        │ validated
+        ▼
+PHASE 2
+Dockerized Application
+        │
+        │ validated
+        ▼
+PHASE 3
+AWS ECR
+        │
+        ▼
+PHASE 4
+ECS + ALB
+        │
+        ▼
+PHASE 5
+RDS MySQL
+        │
+        ▼
+PHASE 6
+Production + CI/CD
 ```
 
-The important point is that the frontend itself was working.
-
-The problem was the routing between:
-
-``` text
-Frontend
-```
-
-and:
-
-``` text
-Backend
-```
-
-**---**
-
-# 16. Why We Should Not Hard-Code Backend Public IP
-
-Initially we considered directly calling:
-
-``` text
-http://52.66.223.6:8082
-```
-
-from Angular.
-
-But this is not a permanent solution.
-
-The reason is that Fargate tasks can be replaced.
-
-For example:
-
-``` text
-Backend Task
-52.66.223.6
-```
-
-could later become:
-
-``` text
-New Backend Task
-<new public IP>
-```
-
-Similarly, the frontend public IP can also change.
-
-Therefore:
-
-``` text
-Angular
-   ↓
-Hard-coded Fargate IP
-```
-
-is not a reliable production architecture.
-
-**---**
-
-# 17. Important Learning --- Fargate Public IP
-
-A Fargate task is an ephemeral compute resource.
-
-Its public IP should not be treated as the permanent address of our
-application.
-
-The current setup:
-
-``` text
-Public IP
-    ↓
-Fargate Task
-```
-
-is useful for learning and testing.
-
-But for a more realistic deployment, we need:
-
-``` text
-Stable Endpoint
-       ↓
-Application Load Balancer
-       ↓
-ECS Services
-       ↓
-Fargate Tasks
-```
-
-**---**
-
-# 18. Permanent Architecture Planned
-
-The next phase will introduce an:
-
-``` text
-Application Load Balancer
-```
-
-The planned architecture is:
-
-``` text
-                         Internet
-                            |
-                            ↓
-                 Application Load Balancer
-                            |
-             +--------------+--------------+
-             |                             |
-          /api/*                           /*
-             |                             |
-             ↓                             ↓
-      Backend Target Group         Frontend Target Group
-             |                             |
-             ↓                             ↓
-      ECS Backend Service          ECS Frontend Service
-             |                             |
-             ↓                             ↓
-      Fargate Backend Task         Fargate Frontend Task
-             |                             |
-          Port 8082                     Port 80
-```
-
-**---**
-
-# 19. ALB Routing Plan
-
-The ALB will listen on:
-
-``` text
-HTTP :80
-```
-
-Backend rule:
-
-``` text
-/api/*
-```
-
-will be routed to:
-
-``` text
-Backend Target Group
-```
-
-Backend port:
-
-``` text
-8082
-```
-
-All other requests will be routed to:
-
-``` text
-Frontend Target Group
-```
-
-Frontend port:
-
-``` text
-80
-```
-
-Therefore:
-
-``` text
-http://<ALB-DNS>/api/users/samuel/list-todos
-```
-
-will go to:
-
-``` text
-Backend
-```
-
-while:
-
-``` text
-http://<ALB-DNS>/welcome/samuel
-```
-
-will go to:
-
-``` text
-Frontend
-```
-
-**---**
-
-# 20. Desired Final Request Flow
-
-After ALB configuration:
-
-``` text
-                         Browser
-                            |
-                            ↓
-                    Stable ALB Endpoint
-                            |
-              +-------------+-------------+
-              |                           |
-          /api/*                        /*
-              |                           |
-              ↓                           ↓
-        Backend ECS                Frontend ECS
-              |                           |
-           :8082                         :80
-              |                           |
-              ↓                           ↓
-        Spring Boot                    Nginx
-              |                           |
-              ↓                           ↓
-          Database                    Angular
-```
-
-Angular can continue using:
-
-``` text
-/api/...
-```
-
-without knowing the backend Fargate task's IP.
-
-**---**
-
-# 21. Phase 2 Final Status
-
-  Component                     Status
-  ----------------------------- ----------------------------
-  Angular application           ✅ Complete
-  Nginx configuration           ✅ Complete
-  Docker frontend image         ✅ Complete
-  Frontend ECR repository       ✅ Complete
-  ECS cluster                   ✅ Running
-  Frontend task definition      ✅ Revision 3
-  Frontend ECS service          ✅ Active
-  Frontend Fargate task         ✅ Running
-  Frontend public access        ✅ Working
-  Backend ECS service           ✅ Running
-  Frontend → Backend routing    ⚠️ Needs permanent routing
-  Direct Fargate public IP      ⚠️ Temporary
-  Application Load Balancer     ⏳ Next phase
-  Target groups                 ⏳ Next phase
-  Path-based routing            ⏳ Next phase
-  Stable application endpoint   ⏳ Next phase
-
-**---**
-
-# 22. Phase 1 vs Phase 2
-
-  -------------------------------------------------------------------------
-  Phase       AWS / Technology                    What we did
-  ----------- ----------------------------------- -------------------------
-  **Phase 0** Amazon ECR                          Stored frontend & backend
-                                                  Docker images
-
-  **Phase 1** Amazon ECS                          Created ECS cluster
-
-  **Phase 1** AWS Fargate                         Deployed backend
-                                                  container
-
-  **Phase 1** IAM                                 Used ECS task execution
-                                                  role
-
-  **Phase 1** ECS Task Definition                 Defined backend
-                                                  container, CPU, memory,
-                                                  port, image and logs
-
-  **Phase 1** ECS Service                         Maintained backend task
-
-  **Phase 1** Security Group                      Allowed backend TCP
-                                                  `8082`
-
-  **Phase 1** CloudWatch                          Configured backend
-                                                  container logs
-
-  **Phase 2** Docker                              Containerized Angular
-                                                  frontend
-
-  **Phase 2** Nginx                               Served Angular static
-                                                  files
-
-  **Phase 2** Amazon ECR                          Stored frontend image
-
-  **Phase 2** ECS Task Definition                 Created
-                                                  `todo-frontend-task:3`
-
-  **Phase 2** ECS Service                         Created
-                                                  `todo-frontend-service`
-
-  **Phase 2** AWS Fargate                         Ran frontend container
-
-  **Phase 2** Networking                          Assigned frontend public
-                                                  IP
-
-  **Phase 2** Testing                             Verified Angular
-                                                  application
-
-  **Phase 2** Troubleshooting                     Identified
-                                                  frontend/backend routing
-                                                  issue
-
-  **Phase 2** Architecture                        Identified need for ALB
-  -------------------------------------------------------------------------
-
-**---**
-
-# 23. Where We Are Now
-
-**Completed:**
-
-``` text
-✅ Phase 0 — ECR
-
-   ├── Frontend image
-   └── Backend image
-
-✅ Phase 1 — ECS/Fargate Backend
-
-   ├── ECS Cluster
-   ├── Fargate
-   ├── IAM execution role
-   ├── Backend Task Definition
-   ├── Backend ECS Service
-   ├── Security Group
-   ├── CloudWatch logs
-   ├── Public IP
-   └── REST API test
-
-✅ Phase 2 — ECS/Fargate Frontend
-
-   ├── Angular Docker image
-   ├── Nginx
-   ├── Frontend ECR image
-   ├── Frontend Task Definition
-   ├── Frontend ECS Service
-   ├── Fargate Task
-   ├── Public IP
-   └── Angular UI verification
-```
-
-**\### Next phase**
-
-The natural next step is to move from:
-
-``` text
-Public IP → ECS Task
-```
-
-to:
-
-``` text
-                         Internet
-                            |
-                            ↓
-                  Application Load
-                      Balancer
-                            |
-                  +---------+---------+
-                  |                   |
-               /api/*                /*
-                  |                   |
-                  ↓                   ↓
-             Backend ECS        Frontend ECS
-                  |                   |
-               Fargate             Fargate
-                  |                   |
-             Spring Boot           Nginx
-```
-
-This will give us a **stable application endpoint** and remove the dependency on changing Fargate public IPs.
+### Key Docker concepts learned
+
+1. **Multi-stage Docker builds**
+2. Docker build context
+3. Docker images vs containers
+4. Host-to-container port mapping
+5. Nginx as the frontend runtime
+6. Nginx reverse proxy
+7. Container-to-container communication
+8. Docker DNS/service names
+9. Docker Compose networking
+10. Validating an entire application inside containers
+
+**Phase 2: 🟢 COMPLETE**
+
+The next milestone is **Phase 3 — AWS Foundation + ECR**, where we'll take these validated Docker images and learn how to push and retrieve them from AWS ECR before introducing ECS.

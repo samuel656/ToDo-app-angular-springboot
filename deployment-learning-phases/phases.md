@@ -1,84 +1,146 @@
-# AWS Dockerized Microservice Deployment Roadmap
+## 🎯 Our actual goal
 
-## Phase 0 — Docker & Amazon ECR
+                         INTERNET
+                            │
+                            ▼
+                    ┌──────────────┐
+                    │     ALB      │
+                    │ HTTP/HTTPS   │
+                    └──────┬───────┘
+                           │
+                    ┌──────┴──────┐
+                    │             │
+                    ▼             ▼
+               Angular ECS   Spring Boot ECS
+                Fargate          Fargate
+                                  │
+                                  ▼
+                              RDS MySQL
+                              (private)
+```
 
-- Understand Dockerization of the existing Spring Boot backend
-- Understand Dockerization of the existing Angular frontend
-- Create Dockerfiles for backend and frontend
-- Build backend Docker image
-- Build frontend Docker image
-- Run and test both containers locally
-- Create Amazon ECR repository for backend
-- Create Amazon ECR repository for frontend
-- Configure AWS CLI
-- Create IAM user for AWS CLI/ECR
-- Configure AWS CLI credentials
-- Authenticate Docker with Amazon ECR
-- Tag backend Docker image with ECR repository URI
-- Push backend image to ECR
-- Tag frontend Docker image with ECR repository URI
-- Push frontend image to ECR
-- Verify both images in ECR
+And eventually:
 
----
+```text
+GitHub
+   │
+   ▼
+GitHub Actions
+   │
+   ├── Test
+   ├── Build
+   ├── Docker Build
+   ├── Push → ECR
+   └── Deploy → ECS
+```
 
-## Phase 1 — ECS/Fargate
-
-- Create ECS cluster
-- Understand Fargate
-- Create ECS task execution IAM role
-- Create backend task definition
-- Create backend service
-- Run Spring Boot container in AWS
-- Test it
-
----
-
-## Phase 2 — Frontend
-
-- Create frontend task definition
-- Create frontend service
-- Run Angular/Nginx container in AWS
-- Test both containers
+That is the **end goal**.
 
 ---
 
-## Phase 3 — Networking
+# 🧭 Fresh roadmap
 
-- Understand VPC
-- Understand subnets
-- Security groups
-- Public vs private networking
-- Connect frontend → backend
+We're going to use these phases.
 
+### Phase 1 — Understand & run application
+
+```text
+⬜ Clone repository
+⬜ Understand project structure
+⬜ Run Spring Boot
+⬜ Run Angular
+⬜ Verify Angular → Spring Boot
+⬜ Verify Todo CRUD
+```
+
+### Phase 2 — Docker
+
+```text
+⬜ Dockerize Spring Boot
+⬜ Dockerize Angular
+⬜ Understand images
+⬜ Understand containers
+⬜ Port mapping
+⬜ Container networking
+⬜ Docker Compose
+⬜ Validate both containers
+```
+
+### Phase 3 — AWS foundation + ECR
+
+```text
+⬜ AWS account/region
+⬜ IAM
+⬜ AWS CLI
+⬜ ECR repositories
+⬜ Build images
+⬜ Push images
+⬜ Pull image from ECR
+⬜ Validate
+```
+
+### Phase 4 — ECS + ALB
+
+We'll actually make this:
+
+```text
+ECR
+ │
+ ▼
+ECS
+ │
+ ▼
+Fargate
+ │
+ ├── Angular
+ └── Spring Boot
+        │
+        ▼
+       ALB
+```
+
+We'll learn:
+
+```text
+⬜ VPC
+⬜ Subnets
+⬜ Security Groups
+⬜ ECS Cluster
+⬜ Task Definition
+⬜ Task
+⬜ Service
+⬜ Fargate
+⬜ Target Group
+⬜ ALB
+⬜ Listener
+⬜ Health check
+⬜ Public URL
+```
+
+### Phase 5 — Database
+
+```text
+⬜ RDS MySQL
+⬜ Database subnet/network
+⬜ Security groups
+⬜ Spring Boot → RDS
+⬜ Environment variables
+⬜ Secrets
+⬜ Remove H2 dependency/configuration
+⬜ CRUD validation
+```
+
+### Phase 6 — Production + CI/CD
+
+```text
+⬜ CloudWatch
+⬜ Application logs
+⬜ ECS health checks
+⬜ Scaling
+⬜ GitHub Actions
+⬜ Docker build
+⬜ ECR push
+⬜ ECS deployment
+⬜ End-to-end validation
+```
 ---
-
-## Phase 4 — ALB
-
-- Create Application Load Balancer
-- Target groups
-- Listeners
-- Health checks
-- Public URL
-
----
-
-## Phase 5 — Database
-
-- Replace H2 with RDS MySQL
-- Configure Spring Boot
-- Secrets/environment variables
-- Private database networking
-
----
-
-## Phase 6 — Production
-
-- CloudWatch logs
-- ECS health checks
-- Scaling
-- GitHub Actions
-- Automatic Docker → ECR → ECS deployment
-
----
-
